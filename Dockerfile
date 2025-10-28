@@ -1,22 +1,37 @@
+# Stage 1: Build
 FROM golang:1.23-bullseye AS builder
+
 WORKDIR /src
 
-# Copy shared library first
-COPY shared/ ./shared/
+# Copy go mod files
+COPY go.mod go.sum ./
 
-# Copy service files
-COPY keymgr/go.mod keymgr/go.sum ./keymgr/
-WORKDIR /src/keymgr
+# Download dependencies (including shared v1.0.0 from GitHub)
 RUN go mod download
 
-WORKDIR /src
-COPY keymgr/ ./keymgr/
-WORKDIR /src/keymgr
-RUN CGO_ENABLED=0 GOOS=linux go build -o /out/keymgr ./cmd/keymgr
+# Copy source code
+COPY . .
 
+# Build the service
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o /app/keymgr ./cmd/keymgr
+
+# Stage 2: Runtime
 FROM alpine:3.18
-RUN apk add --no-cache ca-certificates
-COPY --from=builder /out/keymgr /usr/local/bin/keymgr
-COPY keymgr/config/ /config/
+
+# Install CA certificates for HTTPS
+RUN apk --no-cache add ca-certificates
+
+# Copy binary from builder
+COPY --from=builder /app/keymgr /usr/local/bin/keymgr
+
+# Copy config if exists
+COPY config/ /config/ 2>/dev/null || true
+
+# Expose ports
 EXPOSE 8080 9090
+
+# Run as non-root user
+RUN adduser -D -u 1000 gigvault
+USER gigvault
+
 ENTRYPOINT ["/usr/local/bin/keymgr"]
